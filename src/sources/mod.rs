@@ -100,3 +100,5 @@ enum BuildError {
     #[snafu(display("URI parse error: {}", source))]
     UriParseError { source: ::http::uri::InvalidUri },
 }
+
+pub mod azure_event_hub;

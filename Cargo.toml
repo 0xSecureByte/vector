@@ -130,6 +130,7 @@ members = [
   "lib/vector-vrl/tests",
   "lib/vector-vrl/web-playground",
   "vdev",
+  "src/sources/azure_event_hub",
 ]
 
 [workspace.dependencies]

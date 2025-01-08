@@ -241,3 +241,21 @@ pub fn num_threads() -> usize {
     };
     usize::from(count)
 }
+
+// Collect all source plugins
+// Removed reference to vector_lib::plugin::Plugin as it does not exist.
+
+#[allow(dead_code)]
+mod dummy_plugin_reference {
+    use crate::sources::azure_event_hub::AzureEventHubSource;
+    use crate::sources::azure_event_hub::config::AzureEventHubConfig;
+
+    pub(crate) fn reference_plugin() {
+        let _ = AzureEventHubSource::new(AzureEventHubConfig {
+            connection_string: "dummy".into(),
+            blob_storage_account: "dummy".into(),
+            blob_storage_key: "dummy".into(),
+            blob_storage_url: "dummy".into(),
+        });
+    }
+}
