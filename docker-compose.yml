@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target:/app/target
+    command: bash
+    tty: true
+
+volumes:
+  cargo-cache:
+  target:
