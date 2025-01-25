@@ -1,16 +1,8 @@
 use anyhow::Result;
-use azeventhubs::consumer::{
-    EventHubConsumerClient, 
-    EventHubConsumerClientOptions,
-};
-use azeventhubs::{
-    BasicRetryPolicy, 
-    EventHubsRetryPolicy, 
-    EventHubsRetryOptions,
-};
-use azeventhubs::authorization::EventHubTokenCredential;
+use azeventhubs::consumer::{EventHubConsumerClient, EventHubConsumerClientOptions};
+use azeventhubs::{EventHubsRetryPolicy, BasicRetryPolicy, EventHubsRetryOptions};
+use azeventhubs::EventHubsTransportType;
 use azure_identity::DefaultAzureCredential;
-use azure_core::auth::{TokenCredential, TokenResponse};
 use tokio::sync::Mutex;
 use tracing::info;
 use std::time::Duration;
@@ -47,27 +39,34 @@ where
         info!("Namespace: {}", self.config.fully_qualified_namespace);
         info!("Consumer Group: {}", self.config.consumer_group);
         
-        let credential = MyTokenCredential::new();
+        let fully_qualified_namespace = format!(
+            "{}.servicebus.windows.net",
+            self.config.fully_qualified_namespace
+        );
+        
+        let credential = DefaultAzureCredential::default();
         let mut client_options = EventHubConsumerClientOptions::default();
         
+        // Configure basic options
         client_options.connection_options.connection_idle_timeout = Duration::from_secs(300);
+        client_options.connection_options.transport_type = EventHubsTransportType::AmqpWebSockets;
         client_options.retry_options.max_retries = MaxRetries::new(5).unwrap();
         client_options.retry_options.delay = Duration::from_secs(2);
         
+        info!("Creating Event Hub client with namespace: {}", fully_qualified_namespace);
         let client = EventHubConsumerClient::with_policy::<RP>()
             .new_from_credential(
                 self.config.consumer_group.clone(),
-                self.config.fully_qualified_namespace.clone(),
+                fully_qualified_namespace,
                 self.config.event_hub_name.clone(),
                 credential,
                 client_options,
-            )
-            .await?;
+            ).await?;
 
         let mut locked_client = self.client.lock().await;
         *locked_client = Some(client);
 
-        info!("Connected to Event Hub: {}", self.config.event_hub_name);
+        info!("Successfully connected to Event Hub: {}", self.config.event_hub_name);
         Ok(())
     }
 
@@ -81,31 +80,5 @@ where
 
     pub fn get_config(&self) -> &EventHubConfig {
         &self.config
-    }
-}
-
-// Define a wrapper for DefaultAzureCredential to implement EventHubTokenCredential
-pub struct MyTokenCredential {
-    inner: DefaultAzureCredential,
-}
-
-impl MyTokenCredential {
-    pub fn new() -> Self {
-        Self {
-            inner: DefaultAzureCredential::default(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl TokenCredential for MyTokenCredential {
-    async fn get_token(&self, resource: &str) -> azure_core::Result<TokenResponse> {
-        self.inner.get_token(resource).await
-    }
-}
-
-impl From<MyTokenCredential> for EventHubTokenCredential {
-    fn from(cred: MyTokenCredential) -> Self {
-        EventHubTokenCredential::new(cred)
     }
 }

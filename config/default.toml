@@ -2,9 +2,9 @@ data_dir = "data"
 
 [sources.azure_eventhub_logs]
 type = "azure_event_hub"
-event_hub.fully_qualified_namespace = "crystal-cosmic.servicebus.windows.net"
-event_hub.event_hub_names = ["eventhub-1"]
-event_hub.consumer_group = "${'$'}Default"
+event_hub.fully_qualified_namespace = "crystal-cosmic"
+event_hub.event_hub_name = "eventhub-1"
+event_hub.consumer_group = '$$Default'
 event_hub.partition_count = 4
 
 processing.batch_size = 100

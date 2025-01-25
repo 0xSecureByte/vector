@@ -246,11 +246,12 @@ parking_lot = { version = "0.12.1", default-features = false, optional = true }
 backoff = { version = "0.4.0", features = ["tokio"], default-features = false, optional = true }
 anyhow = { version = "1.0.79", default-features = false, optional = true }
 thiserror = { version = "1.0.56", default-features = false, optional = true }
-azeventhubs = { version = "0.19", default-features = false, optional = true }
-azure_core = { version = "0.17", default-features = false, features = ["enable_reqwest"], optional = true }
-azure_identity = { version = "0.17", default-features = false, features = ["enable_reqwest"], optional = true }
-azure_storage = { version = "0.17", default-features = false, optional = true }
-azure_storage_blobs = { version = "0.17", default-features = false, optional = true }
+azeventhubs = { version = "0.19.0", default-features = false, features = ["rustls"], optional = true }
+azure_core = { version = "0.19.0", default-features = false, features = ["enable_reqwest"], optional = true }
+azure_identity = { version = "0.19.0", default-features = false, features = ["enable_reqwest"], optional = true }
+azure_storage = { version = "0.19.0", default-features = false, optional = true }
+azure_storage_blobs = { version = "0.19.0", default-features = false, optional = true }
+native-tls = { version = "0.2.13", default-features = false, optional = true }
 
 # OpenDAL
 opendal = { version = "0.45", default-features = false, features = ["native-tls", "services-webhdfs"], optional = true }
@@ -424,6 +425,7 @@ azure_core = { version = "0.17", default-features = false, features = ["enable_r
 azure_identity = { version = "0.17", default-features = false, features = ["enable_reqwest"] }
 azure_storage_blobs = { version = "0.17", default-features = false, features = ["azurite_workaround"] }
 azure_storage = { version = "0.17", default-features = false }
+native-tls = { version = "0.2.13", default-features = false }
 base64 = "0.22.1"
 criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
@@ -605,7 +607,7 @@ sources-aws_ecs_metrics = ["sources-utils-http-client"]
 sources-aws_kinesis_firehose = ["dep:base64"]
 sources-aws_s3 = ["aws-core", "dep:aws-sdk-sqs", "dep:aws-sdk-s3", "dep:semver", "dep:async-compression", "sources-aws_sqs", "tokio-util/io"]
 sources-aws_sqs = ["aws-core", "dep:aws-sdk-sqs"]
-sources-azure_event_hub = ["dep:azure_core", "dep:azure_identity", "dep:azeventhubs", "dep:azure_storage_blobs", "dep:azure_storage", "dep:anyhow", "dep:thiserror", "dep:crossbeam-channel", "dep:crossbeam-queue", "dep:parking_lot", "dep:backoff"]
+sources-azure_event_hub = ["dep:azure_core", "dep:azure_identity", "dep:azeventhubs", "dep:azure_storage_blobs", "dep:azure_storage", "dep:anyhow", "dep:thiserror", "dep:crossbeam-channel", "dep:crossbeam-queue", "dep:parking_lot", "dep:backoff", "dep:native-tls"]
 sources-datadog_agent = ["sources-utils-http-error", "protobuf-build", "dep:prost"]
 sources-demo_logs = ["dep:fakedata"]
 sources-dnstap = ["sources-utils-net-tcp", "dep:base64", "dep:hickory-proto", "dep:dnsmsg-parser", "dep:dnstap-parser", "protobuf-build", "dep:prost"]
