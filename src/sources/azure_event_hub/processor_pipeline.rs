@@ -5,6 +5,9 @@ use tokio::sync::mpsc;
 use tracing::{error, warn, info};
 use serde::{Serialize, Deserialize};
 use std::time::Duration;
+use vector_lib::event::LogEvent;
+use crate::SourceSender;
+use crate::internal_events::StreamClosedError;
 
 use super::processor::Event;
 
@@ -50,22 +53,20 @@ pub struct EventMetadata {
 pub struct ProcessingPipeline {
     config: ProcessingConfig,
     input_queue: Arc<ArrayQueue<Event>>,
-    output_sender: mpsc::Sender<EventBatch>,
+    output_sender: SourceSender,
 }
 
 impl ProcessingPipeline {
     /// Creates a new processing pipeline
     pub fn new(
         config: ProcessingConfig,
-    ) -> (Self, mpsc::Receiver<EventBatch>) {
-        let (output_sender, output_receiver) = mpsc::channel(config.queue_size);
-        let input_queue = Arc::new(ArrayQueue::new(config.queue_size));
-
-        (Self {
-            config,
-            input_queue,
+        output_sender: SourceSender,
+    ) -> Self {
+        Self {
+            config: config.clone(),
+            input_queue: Arc::new(ArrayQueue::new(config.queue_size)),
             output_sender,
-        }, output_receiver)
+        }
     }
 
     /// Starts the processing pipeline
@@ -93,7 +94,7 @@ impl ProcessingPipeline {
     /// Spawns a processing worker
     async fn spawn_worker(&self, worker_id: usize) -> Result<()> {
         let input_queue = Arc::clone(&self.input_queue);
-        let output_sender = self.output_sender.clone();
+        let mut output_sender = self.output_sender.clone();
         let config = self.config.clone();
 
         tokio::spawn(async move {
@@ -109,18 +110,15 @@ impl ProcessingPipeline {
                             current_partition = event.partition_id.clone();
                         }
 
-                        // Process the event
-                        let processed = ProcessedEvent {
-                            data: event.data,
-                            metadata: EventMetadata {
-                                partition_id: event.partition_id.clone(),
-                                sequence_number: event.sequence_number,
-                                offset: event.offset.clone(),
-                                timestamp: chrono::Utc::now().timestamp_millis(),
-                            },
-                        };
+                        // Convert to Vector LogEvent
+                        let mut log_event = LogEvent::default();
+                        log_event.insert("data", event.data);
+                        log_event.insert("partition_id", event.partition_id);
+                        log_event.insert("sequence_number", event.sequence_number);
+                        log_event.insert("offset", event.offset.to_string());
+                        log_event.insert("timestamp", chrono::Utc::now().timestamp_millis());
 
-                        batch.push(processed);
+                        batch.push(log_event);
                     } else {
                         // No more events available right now
                         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -128,19 +126,13 @@ impl ProcessingPipeline {
                     }
                 }
 
-                // Send batch if we have events
+                // Send batch events
                 if !batch.is_empty() {
-                    let event_batch = EventBatch {
-                        events: batch,
-                        partition_id: current_partition.clone(),
-                    };
-
-                    if let Err(e) = output_sender.send(event_batch).await {
-                        error!("Failed to send batch to output: {}", e);
+                    let count = batch.len();
+                    if let Err(_) = output_sender.send_batch(batch.drain(..).collect::<Vec<LogEvent>>()).await {
+                        error!("Failed to send batch to output");
+                        emit!(StreamClosedError { count });
                     }
-
-                    // Prepare for next batch
-                    batch = Vec::with_capacity(config.batch_size);
                     current_partition.clear();
                 }
 
