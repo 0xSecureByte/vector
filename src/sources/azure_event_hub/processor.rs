@@ -97,7 +97,7 @@ impl EventHubConsumer {
                     let credential = DefaultAzureCredential::default();
                     let mut client_options = EventHubConsumerClientOptions::default();
                     client_options.connection_options.connection_idle_timeout = Duration::from_secs(300);
-                    client_options.connection_options.transport_type = EventHubsTransportType::AmqpWebSockets;
+                    client_options.connection_options.transport_type = EventHubsTransportType::AmqpTcp;
                     client_options.retry_options.max_retries = MaxRetries::new(5).unwrap();
                     client_options.retry_options.delay = Duration::from_secs(2);
 
