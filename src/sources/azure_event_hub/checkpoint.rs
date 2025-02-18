@@ -121,7 +121,7 @@ impl CheckpointStore {
                 .as_secs() as i64,
         };
 
-        // Save to memory
+        // Save to memory first
         {
             let mut checkpoints = self.checkpoints.write().await;
             checkpoints.insert(partition_id.to_string(), checkpoint.clone());
@@ -129,22 +129,21 @@ impl CheckpointStore {
 
         // Save to blob storage
         let blob_name = format!("{}/{}/checkpoint.json", self.event_hub_name, partition_id);
-        let blob = self.container_client
-            .blob_client(&blob_name);
+        let blob = self.container_client.blob_client(&blob_name);
 
         let content = serde_json::to_vec(&checkpoint)
             .context("Failed to serialize checkpoint")?;
 
-        blob.put_block_blob(content)
+        match blob.put_block_blob(content)
             .content_type("application/json")
-            .await
-            .map_err(|e| {
-                warn!("Failed to save checkpoint to storage: {}", e);
-                anyhow::anyhow!("Failed to save checkpoint: {}", e)
-            })?;
-
-        info!("Saved checkpoint for partition {}", partition_id);
-        Ok(())
+            .await {
+            Ok(_) => {
+                info!("Checkpoint saved - Partition: {}, Offset: {}, Sequence: {}", 
+                    partition_id, offset, sequence_number);
+                Ok(())
+            }
+            Err(e) => Err(anyhow::anyhow!("Failed to save checkpoint: {}", e))
+        }
     }
 
     pub async fn load_checkpoint(&self, partition_id: &str) -> Result<Option<Checkpoint>> {
@@ -187,24 +186,73 @@ impl CheckpointStore {
         self.interval_seconds
     }
 
-    pub async fn start_periodic_flush(self: Arc<Self>) -> Result<()> {
-        let interval = Duration::from_secs(self.interval_seconds);
-        let store = self.clone(); // Clone the Arc
-        
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(interval);
-            loop {
-                interval.tick().await;
-                if let Err(e) = store.flush_checkpoints().await {
-                    error!("Error flushing checkpoints: {}", e);
-                }
-            }
-        });
+    // Add new method for in-memory updates
+    pub async fn update_checkpoint(
+        &self,
+        partition_id: &str,
+        offset: i64,
+        sequence_number: i64,
+    ) -> Result<()> {
+        let checkpoint = Checkpoint {
+            partition_id: partition_id.to_string(),
+            offset,
+            sequence_number,
+            updated_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        };
 
+        // Update only in-memory cache
+        let mut checkpoints = self.checkpoints.write().await;
+        checkpoints.insert(partition_id.to_string(), checkpoint);
         Ok(())
     }
 
-    async fn flush_checkpoints(&self) -> Result<()> {
+    // Keep periodic flush as the only storage writer
+    pub async fn start_periodic_flush(self: Arc<Self>) -> Result<()> {
+        let interval = Duration::from_secs(self.interval_seconds);
+        let store = self.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(interval);
+            let mut last_checkpoints: HashMap<String, Checkpoint> = HashMap::new();
+            
+            loop {
+                interval.tick().await;
+                let checkpoints = store.checkpoints.read().await;
+                
+                for (partition_id, checkpoint) in checkpoints.iter() {
+                    if let Some(last_checkpoint) = last_checkpoints.get(partition_id) {
+                        if checkpoint.offset == last_checkpoint.offset {
+                            continue;
+                        }
+                    }
+                    
+                    // Save to blob storage only during periodic flush
+                    let blob_name = format!("{}/{}/checkpoint.json", store.event_hub_name, partition_id);
+                    let blob = store.container_client.blob_client(&blob_name);
+                    
+                    match serde_json::to_vec(&checkpoint) {
+                        Ok(content) => {
+                            if let Ok(_) = blob.put_block_blob(content)
+                                .content_type("application/json")
+                                .await 
+                            {
+                                info!("Checkpoint saved - Partition: {}, Offset: {}", 
+                                    partition_id, checkpoint.offset);
+                                last_checkpoints.insert(partition_id.clone(), checkpoint.clone());
+                            }
+                        }
+                        Err(e) => error!("Failed to serialize checkpoint: {}", e)
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    pub async fn flush_checkpoints(&self) -> Result<()> {
         let checkpoints = self.checkpoints.read().await;
         for (partition_id, checkpoint) in checkpoints.iter() {
             // Save checkpoint to blob storage

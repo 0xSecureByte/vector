@@ -58,6 +58,12 @@ impl EventHubConsumer {
     ) -> (Self, mpsc::Receiver<Event>) {
         let (sender, receiver) = mpsc::channel(config.buffer_size);
         
+        // Start periodic checkpoint flush only once
+        if let Some(store) = &checkpoint_store {
+            info!("Starting periodic checkpoint flush...");
+            tokio::spawn(store.clone().start_periodic_flush());
+        }
+
         (Self {
             client,
             fully_qualified_namespace,
@@ -69,7 +75,28 @@ impl EventHubConsumer {
         }, receiver)
     }
 
+    // Remove duplicate shutdown handler
     pub async fn start_consuming(&mut self) -> Result<()> {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+        let checkpoint_store_clone = self.checkpoint_store.clone();
+        
+        tokio::spawn(async move {
+            if let Ok(_) = shutdown_rx.recv().await {
+                if let Some(store) = checkpoint_store_clone {
+                    info!("Final checkpoint flush...");
+                    let _ = tokio::time::timeout(Duration::from_secs(30), store.flush_checkpoints()).await;
+                }
+            }
+        });
+
+        // Set up signal handler
+        let shutdown_sender_clone = shutdown_tx.clone();
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.unwrap();
+            info!("Received shutdown signal");
+            let _ = shutdown_sender_clone.send(());
+        });
+
         let partition_ids = self.client.get_partition_ids().await?;
         info!("Found {} partitions: {:?}", partition_ids.len(), partition_ids);
         
@@ -149,8 +176,7 @@ impl EventHubConsumer {
                         }
                     };
 
-                    let mut last_checkpoint_time = tokio::time::Instant::now();
-                    
+                    // Remove checkpoint saving from event processing
                     while let Some(event_result) = stream.next().await {
                         match event_result {
                             Ok(event_data) => {
@@ -158,10 +184,7 @@ impl EventHubConsumer {
                                 let offset = event_data.offset().unwrap_or_default();
 
                                 let body = match event_data.body() {
-                                    Ok(data) => {
-                                        let body_vec = data.to_vec();
-                                        body_vec
-                                    },
+                                    Ok(data) => data.to_vec(),
                                     Err(e) => {
                                         error!("Failed to get event body from partition {}: {}", partition_id, e);
                                         continue;
@@ -175,27 +198,18 @@ impl EventHubConsumer {
                                     offset,
                                 };
 
-                                match sender.send(processed_event).await {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        error!("Failed to send event from partition {} to channel: {}", partition_id, e);
-                                        continue;
-                                    }
+                                if let Err(e) = sender.send(processed_event).await {
+                                    error!("Failed to send event from partition {} to channel: {}", partition_id, e);
+                                    continue;
                                 }
 
-                                // Checkpoint periodically
+                                // Update in-memory checkpoint without saving to storage
                                 if let Some(store) = &partition_checkpoint_store {
-                                    let now = tokio::time::Instant::now();
-                                    if now.duration_since(last_checkpoint_time).as_secs() >= 30 {
-                                        if let Err(e) = store.save_checkpoint(
-                                            &partition_id,
-                                            offset,
-                                            sequence_number
-                                        ).await {
-                                            error!("Failed to save checkpoint for partition {}: {}", partition_id, e);
-                                        }
-                                        last_checkpoint_time = now;
-                                    }
+                                    let _ = store.update_checkpoint(
+                                        &partition_id,
+                                        offset,
+                                        sequence_number
+                                    ).await;
                                 }
                             }
                             Err(e) => {

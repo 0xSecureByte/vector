@@ -2,24 +2,25 @@ data_dir = "data"
 
 [sources.azure_eventhub_logs]
 type = "azure_event_hub"
-event_hub.fully_qualified_namespace = "crystal-cosmic"
+event_hub.fully_qualified_namespace = "crystal-cosmic-2"
 event_hub.event_hub_name = "eventhub-1"
 event_hub.consumer_group = '$$Default'
 event_hub.partition_count = 4
 
-processing.batch_size = 100
-processing.batch_timeout_ms = 1000
-processing.worker_count = 4
-processing.queue_size = 1000
+# High-throughput processing settings
+processing.batch_size = 5000          # Reduced from 10000 for better memory management
+processing.batch_timeout_ms = 100     # Reduced for faster processing
+processing.worker_count = 8           # Increased for parallel processing
+processing.queue_size = 10000         # Increased for buffering
 
+# Optimized checkpointing
 checkpointing.enabled = true
-checkpointing.storage_account_name = "chkpnt"
+checkpointing.storage_account_name = "chkpntpntstorage"
 checkpointing.container_name = "chkpnt-container"
-checkpointing.interval_seconds = 3
-checkpointing.retry_max_attempts = 5
-checkpointing.retry_initial_interval_ms = 1000
+checkpointing.interval_seconds = 30    # More frequent checkpoints for safety
+checkpointing.retry_max_attempts = 5   # Reduced to prevent blocking
+checkpointing.retry_initial_interval_ms = 100  # Faster retries
 
-# Add a sink to see the events (for testing)
 [sinks.console]
 type = "console"
 inputs = ["azure_eventhub_logs"]
