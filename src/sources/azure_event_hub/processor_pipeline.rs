@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 use std::time::Duration;
 use vector_lib::event::LogEvent;
 use crate::SourceSender;
-use crate::internal_events::StreamClosedError;
+use serde_json::Value;
 
 use super::processor::Event;
 
@@ -100,43 +100,44 @@ impl ProcessingPipeline {
         tokio::spawn(async move {
             info!("Starting worker {}", worker_id);
             let mut batch = Vec::with_capacity(config.batch_size);
-            let mut current_partition = String::new();
             
             loop {
-                // Try to fill a batch
                 while batch.len() < config.batch_size {
                     if let Some(event) = input_queue.pop() {
-                        if current_partition.is_empty() {
-                            current_partition = event.partition_id.clone();
+                        match String::from_utf8(event.data.clone())
+                            .map_err(|e| error!("Invalid UTF-8: {}", e))
+                            .and_then(|json_str| {
+                                serde_json::from_str::<Value>(&json_str)
+                                    .map_err(|e| error!("Invalid JSON: {}", e))
+                            }) {
+                            Ok(json_value) => {
+                                let mut log_event = LogEvent::default();
+                                if let Some(map) = json_value.as_object() {
+                                    for (key, value) in map {
+                                        log_event.insert(key.as_str(), value.clone());
+                                    }
+                                }
+                                log_event.insert("partition_id", event.partition_id);
+                                log_event.insert("sequence_number", event.sequence_number);
+                                log_event.insert("offset", event.offset.to_string());
+                                log_event.insert("timestamp", chrono::Utc::now().timestamp_millis());
+                                batch.push(log_event);
+                            }
+                            Err(_) => continue,
                         }
-
-                        // Convert to Vector LogEvent
-                        let mut log_event = LogEvent::default();
-                        log_event.insert("data", event.data);
-                        log_event.insert("partition_id", event.partition_id);
-                        log_event.insert("sequence_number", event.sequence_number);
-                        log_event.insert("offset", event.offset.to_string());
-                        log_event.insert("timestamp", chrono::Utc::now().timestamp_millis());
-
-                        batch.push(log_event);
                     } else {
-                        // No more events available right now
                         tokio::time::sleep(Duration::from_millis(1)).await;
                         break;
                     }
                 }
 
-                // Send batch events
                 if !batch.is_empty() {
-                    let count = batch.len();
-                    if let Err(_) = output_sender.send_batch(batch.drain(..).collect::<Vec<LogEvent>>()).await {
+                    let events: Vec<LogEvent> = batch.drain(..).collect();
+                    if let Err(_) = output_sender.send_batch(events).await {
                         error!("Failed to send batch to output");
-                        emit!(StreamClosedError { count });
                     }
-                    current_partition.clear();
                 }
 
-                // Small sleep to prevent tight loop
                 tokio::time::sleep(Duration::from_millis(config.batch_timeout_ms)).await;
             }
         });
